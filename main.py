@@ -38,8 +38,10 @@ def analyze_gold():
     d_latest = df_daily.iloc[-1]
     d_prev = df_daily.iloc[-2]
     
-    if d_latest['Close'] > d_latest['SMA200'] and d_latest['RSI'] < 50 and d_latest['Close'] > d_prev['Close']:
-        messages.append(f"【長期サイン】200日線上の押し目です！\n価格: ${d_latest['Close']:.2f} / RSI: {d_latest['RSI']:.1f}")
+    current_close = d_latest['Close'].item()
+sma200_val = d_latest['SMA200'].item()
+rsi_val = d_latest['RSI'].item()
+prev_close = d_prev['Close'].item()
 
     # --- 戦略②：デイトレ (15分足) ---
     df_short['MA20'] = df_short['Close'].rolling(window=20).mean()
@@ -48,8 +50,8 @@ def analyze_gold():
     
     s_latest = df_short.iloc[-1]
     
-    if s_latest['Close'] > s_latest['Upper']:
-        messages.append(f"【デイトレサイン】ボリバン上限を突破！強い勢いです。\n現在値: ${s_latest['Close']:.2f}")
+    if current_close > sma200_val and rsi_val < 50 and current_close > prev_close:
+    messages.append(f"【長期サイン】200日線上の押し目です！\n価格: ${current_close:.2f} / RSI: {rsi_val:.1f}")
 
     # --- 通知の実行 ---
     if messages:
