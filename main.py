@@ -5,8 +5,8 @@ import json
 import os
 
 # --- GitHubのSecretsから設定を読み込む ---
-ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
-USER_ID = os.getenv('LINE_USER_ID')
+ACCESS_TOKEN = os.getenv('OcCe50iI/ARdbPZbAm4+BqEwqNL3BC5l+HabJ56a7f4OnHtLoA3y3zMvyNk38NLn3kKRv7FrNF7VHz55p/9RFKHb29G09UkHdqwwbC/ieuhZgCdb/nlmw9GcZZf2YjZF7oadKvJNdHC6awkq4QRaOwdB04t89/1O/w1cDnyilFU=')
+USER_ID = os.getenv('71d9922a7127351436b04a0393f14586')
 
 def send_line(text):
     url = "https://api.line.me/v2/bot/message/push"
