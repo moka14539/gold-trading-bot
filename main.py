@@ -12,10 +12,10 @@ def send_line(text):
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {ACCESS_TOKEN}"
+        "Authorization": f"Bearer {OcCe50iI/ARdbPZbAm4+BqEwqNL3BC5l+HabJ56a7f4OnHtLoA3y3zMvyNk38NLn3kKRv7FrNF7VHz55p/9RFKHb29G09UkHdqwwbC/ieuhZgCdb/nlmw9GcZZf2YjZF7oadKvJNdHC6awkq4QRaOwdB04t89/1O/w1cDnyilFU=}"
     }
     data = {
-        "to": USER_ID,
+        "to": 71d9922a7127351436b04a0393f14586,
         "messages": [{"type": "text", "text": text}]
     }
     requests.post(url, headers=headers, data=json.dumps(data))
