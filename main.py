@@ -13,48 +13,67 @@ def send_line(text):
     data = {"to": USER_ID, "messages": [{"type": "text", "text": text}]}
     requests.post(url, headers=headers, data=json.dumps(data))
 
-def analyze_gold_pro():
-    # 1. データの多角的な取得
-    gold_spot = yf.download("GLD", period="5d", interval="60m")    # 現物ETF(1h)
-    gold_fut = yf.download("GC=F", period="5d", interval="60m")   # ゴールド先物(1h)
-    tnx = yf.download("^TNX", period="5d", interval="60m")         # 米10年債利回り
-    usdjpy = yf.download("JPY=X", period="5d", interval="60m")      # ドル円
+def analyze_gold_ultimate():
+    # 1. データの多角取得
+    gold_spot = yf.download("GLD", period="1y")                    # 日足（トレンド用）
+    gold_1h = yf.download("GLD", interval="60m", period="5d")      # 1時間足（エントリー用）
+    gold_fut = yf.download("GC=F", interval="60m", period="5d")    # 先物
+    tnx = yf.download("^TNX", interval="60m", period="5d")         # 米10年債金利
+    usdjpy = yf.download("JPY=X", interval="60m", period="5d")      # ドル円
 
-    # 最新データの抽出 (.item()でエラー回避)
-    g_now = gold_spot['Close'].iloc[-1].item()
-    g_prev = gold_spot['Close'].iloc[-2].item()
-    f_now = gold_fut['Close'].iloc[-1].item()
+    messages = []
+
+    # --- A. 長期環境認識 (日足 200日線) ---
+    gold_spot['SMA200'] = gold_spot['Close'].rolling(window=200).mean()
+    is_long_uptrend = gold_spot['Close'].iloc[-1].item() > gold_spot['SMA200'].iloc[-1].item()
+
+    # --- B. MACD計算 (1時間足) ---
+    exp1 = gold_1h['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = gold_1h['Close'].ewm(span=26, adjust=False).mean()
+    gold_1h['MACD'] = exp1 - exp2
+    gold_1h['Signal'] = gold_1h['MACD'].ewm(span=9, adjust=False).mean()
+    
+    # ゴールデンクロス判定
+    macd_cross = gold_1h['MACD'].iloc[-1].item() > gold_1h['Signal'].iloc[-1].item() and \
+                 gold_1h['MACD'].iloc[-2].item() <= gold_1h['Signal'].iloc[-2].item()
+
+    # --- C. 外部要因判定 (金利・先物・為替) ---
     t_now = tnx['Close'].iloc[-1].item()
     t_prev = tnx['Close'].iloc[-2].item()
+    f_now = gold_fut['Close'].iloc[-1].item()
+    f_prev = gold_fut['Close'].iloc[-2].item()
     u_now = usdjpy['Close'].iloc[-1].item()
     u_prev = usdjpy['Close'].iloc[-2].item()
 
-    # --- 2. 高度なインテリジェンス判定 ---
-    
-    # 金利フィルター：金利が低下中（または横ばい）か？
-    rates_falling = t_now <= t_prev
-    # 先物フィルター：先物も現物と一緒に上がっているか？（同調確認）
-    futures_bullish = f_now > gold_fut['Close'].iloc[-2].item()
-    # ドル円フィルター：ドル安（円高）方向か？
-    usd_weakening = u_now < u_prev
+    rates_falling = t_now < t_prev  # 金利低下
+    fut_bullish = f_now > f_prev    # 先物上昇
+    usd_weakening = u_now < u_prev  # ドル安
 
-    # --- 3. ロジック合体 ---
-    # 条件：現物が上昇 且つ 金利が下落 且つ 先物も強い 
-    if g_now > g_prev and rates_falling and futures_bullish:
-        status = "🟢 優位性あり"
-        if usd_weakening:
-            status = "🔥【超絶チャンス】全条件合致！"
+    # --- 4. 究極の合体ロジック ---
+    # 条件1：長期が上昇トレンドであること
+    # 条件2：MACDがゴールデンクロスした瞬間であること
+    # 条件3：金利が低下していること（ゴールドに有利）
+    
+    if is_long_uptrend and macd_cross:
+        status = "🛡️ 堅実な買いサイン"
+        if rates_falling and fut_bullish:
+            status = "🔥【超絶チャンス】全条件一致！"
         
         text = f"{status}\n\n"
-        text += f"💰ゴールド現物: ${g_now:.2f}\n"
-        text += f"📈ゴールド先物: ${f_now:.2f} (上昇)\n"
-        text += f"📉米10年債金利: {t_now:.2f}% (低下中)\n"
-        text += f"💴ドル円為替: {u_now:.2f} (ドル安傾向)\n\n"
-        text += "💡解説: 金利低下と先物の買いが一致しており、ゴールドの上昇に強い根拠があります。"
+        text += f"💰現物: ${gold_1h['Close'].iloc[-1].item():.2f}\n"
+        text += f"📊MACD: ゴールデンクロス発生！\n"
+        text += f"📉米金利: {t_now:.2f}% (低下中 ✅)\n"
+        text += f"📈先物: ${f_now:.2f} (上昇中 ✅)\n"
+        text += f"💴ドル円: {u_now:.2f} ({'ドル安' if usd_weakening else 'ドル高'})\n\n"
+        text += "💡長期トレンドに乗り、金利低下を確認した「勝率重視」のタイミングです。"
         
-        send_line(text)
+        messages.append(text)
+
+    # 送信
+    if messages:
+        send_line("👑ゴールド・インテリジェンス報告\n\n" + "\n\n".join(messages))
     else:
-        print("条件未達成（金利上昇または先物弱含み）")
+        print("現在は全ての条件を満たすチャンス待ちです。")
 
 if __name__ == "__main__":
-    analyze_gold_pro()
+    analyze_gold_ultimate()
