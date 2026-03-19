@@ -10,17 +10,17 @@ USER_ID = os.getenv('LINE_USER_ID')
 
 def send_line(text):
     # Secretsが正しく設定されていない場合のチェック
-    if not ACCESS_TOKEN or not USER_ID:
+    if not LINE_ACCESS_TOKEN or not LINE_USER_ID:
         print("エラー: LINEのトークンまたはユーザーIDが設定されていません。")
         return
 
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {ACCESS_TOKEN}"
+        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
     }
     data = {
-        "to": USER_ID, # ここがエラーの場所でした。変数をそのまま使えばOK！
+        "to": LINE_USER_ID, # ここがエラーの場所でした。変数をそのまま使えばOK！
         "messages": [{"type": "text", "text": text}]
     }
     res = requests.post(url, headers=headers, data=json.dumps(data))
