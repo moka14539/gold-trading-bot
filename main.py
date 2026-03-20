@@ -15,9 +15,8 @@ def send_line(text):
     data = {"to": USER_ID, "messages": [{"type": "text", "text": text}]}
     requests.post(url, headers=headers, data=json.dumps(data))
 
-def analyze_gold_cfd():
-    # 1. データ取得 (CFD取引で指標となる先物とドル円・金利)
-    # GC=F はゴールド先物、XAUUSD=X は現物。ここでは取引量の多い先物をメインにします。
+def analyze_gold_ultimate_cfd():
+    # 1. データ取得
     gold = yf.download("GC=F", interval="60m", period="7d")
     gold_d = yf.download("GC=F", period="2y")
     tnx = yf.download("^TNX", interval="60m", period="5d")
@@ -27,10 +26,10 @@ def analyze_gold_cfd():
     score = 0
     now_g = gold['Close'].iloc[-1].item()
     
-    # --- 指標計算 ---
-    # 200日線 (長期トレンドの境界線)
+    # --- A. テクニカル指標計算 ---
+    # 200日線 (長期トレンド)
     sma200 = gold_d['Close'].rolling(window=200).mean().iloc[-1].item()
-    # ボリンジャーバンド
+    # ボリンジャーバンド (20, 2sigma)
     ma20 = gold['Close'].rolling(window=20).mean()
     std = gold['Close'].rolling(window=20).std()
     upper, lower = ma20 + (std * 2), ma20 - (std * 2)
@@ -43,56 +42,61 @@ def analyze_gold_cfd():
     delta = gold['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rsi = (100 - (100 / (1 + gain/loss))).iloc[-1].item()
+    gold['RSI'] = 100 - (100 / (1 + gain/loss))
+    rsi_now = gold['RSI'].iloc[-1].item()
+    
+    # ATR (ボラティリティによる変動幅)
+    high_low = gold['High'] - gold['Low']
+    high_close = (gold['High'] - gold['Close'].shift()).abs()
+    low_close = (gold['Low'] - gold['Close'].shift()).abs()
+    atr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean().iloc[-1].item()
 
-    # 外部要因（金利・為替）
+    # --- B. 外部要因 (金利・為替) ---
     t_now, t_prev = tnx['Close'].iloc[-1].item(), tnx['Close'].iloc[-2].item()
     u_now, u_prev = usdjpy['Close'].iloc[-1].item(), usdjpy['Close'].iloc[-2].item()
 
-    # --- 時間帯判定 (CFDが激しく動く欧米時間) ---
+    # --- C. 特殊ロジック (ダイバージェンス & 時間帯) ---
+    # ダイバージェンス: 価格は上がってるのにRSIが下がってる(逆も然り)
+    div_msg = ""
+    if now_g > gold['Close'].iloc[-5].item() and rsi_now < gold['RSI'].iloc[-5].item():
+        div_msg = "⚠️上昇の勢い減衰(ダイバージェンス)"
+    elif now_g < gold['Close'].iloc[-5].item() and rsi_now > gold['RSI'].iloc[-5].item():
+        div_msg = "⚠️下落の勢い減衰(ダイバージェンス)"
+
+    # 時間帯: 欧米市場
     jst = datetime.now(pytz.timezone('Asia/Tokyo'))
-    is_active_time = 16 <= jst.hour <= 24 or 0 <= jst.hour <= 4 # NY終盤まで拡大
-    time_bonus = 1 if is_active_time else 0
-
-    # --- 🟢 BUY戦略 (OR条件) ---
-    if now_g > sma200 and rsi < 40:
-        messages.append("🟢【長期押し目】200日線上での反発チャンス。"); score += 2
-    if now_g > upper.iloc[-2].item():
-        messages.append("📈【加速】ボリバン上限突破。強い買い圧力を検知。"); score += 1
+    is_active = 16 <= jst.hour <= 24 or 0 <= jst.hour <= 4
+    
+    # --- D. 8つの独立戦略判定 (OR条件) ---
+    # 🟢 BUY
+    if now_g > sma200 and rsi_now < 42: messages.append("🟢長期押し目買い"); score += 2
+    if now_g > upper.iloc[-2].item(): messages.append("📈BB上限突破(加速)"); score += 1
     if macd.iloc[-2].item() <= signal.iloc[-2].item() and macd.iloc[-1].item() > signal.iloc[-1].item():
-        messages.append("🔵【転換】MACDゴールデンクロス。"); score += 1
-    if t_now < t_prev and u_now < u_prev:
-        messages.append("🌍【マクロ環境◎】金利低下＆ドル安。ゴールド上昇の鉄板環境。"); score += 2
+        messages.append("🔵MACDゴールデンクロス"); score += 1
+    if t_now < t_prev and u_now < u_prev: messages.append("🌍マクロ追い風(金利安・ドル安)"); score += 2
 
-    # --- 🔴 SELL戦略 (OR条件) ---
-    if now_g < sma200 and rsi > 60:
-        messages.append("🔴【長期戻り売り】200日線下での反落ポイント。"); score -= 2
-    if now_g < lower.iloc[-2].item():
-        messages.append("📉【急落】ボリバン下限を突破。売り加速のサイン。"); score -= 1
+    # 🔴 SELL
+    if now_g < sma200 and rsi_now > 58: messages.append("🔴長期戻り売り"); score -= 2
+    if now_g < lower.iloc[-2].item(): messages.append("📉BB下限突破(急落)"); score -= 1
     if macd.iloc[-2].item() >= signal.iloc[-2].item() and macd.iloc[-1].item() < signal.iloc[-1].item():
-        messages.append("🟠【転換】MACDデッドクロス。"); score -= 1
-    if t_now > t_prev and u_now > u_prev:
-        messages.append("⛔【マクロ逆風】金利上昇＆ドル高。ショート（売り）推奨環境。"); score -= 2
+        messages.append("🟠MACDデッドクロス"); score -= 1
+    if t_now > t_prev and u_now > u_prev: messages.append("⛔マクロ逆風(金利高・ドル高)"); score -= 2
 
-    # --- 判定と損切り・利確目安 ---
+    # --- E. 最終出力 ---
     if messages:
-        score += (time_bonus if score > 0 else -time_bonus)
-        total_score = abs(score)
         direction = "BUY" if score > 0 else "SELL"
+        score_abs = abs(score) + (1 if is_active else 0)
         
-        # ボラティリティに基づいた損切り(SL)と利確(TP)の提示
-        volatility = std.iloc[-1].item()
-        sl_price = now_g - (volatility * 2) if direction == "BUY" else now_g + (volatility * 2)
-        tp_price = now_g + (volatility * 3) if direction == "BUY" else now_g - (volatility * 3)
+        # 損切り・利確 (ATRベースで可変)
+        sl = now_g - (atr * 2.2) if direction == "BUY" else now_g + (atr * 2.2)
+        tp = now_g + (atr * 3.5) if direction == "BUY" else now_g - (atr * 3.5)
 
-        title = f"🔥【CFD全力{direction}推奨】" if total_score >= 4 else f"📢 CFDゴールド監視報告"
-        output = f"{title}\n時別: {'欧米市場(高ボラ) ✅' if is_active_time else 'アジア市場(低ボラ)'}\n\n"
-        output += "\n---\n".join(messages)
-        output += f"\n\n💰現在価格: ${now_g:.2f}"
-        output += f"\n🛡️損切り目安: ${sl_price:.2f}"
-        output += f"\n🎯利確目安: ${tp_price:.2f}"
-        output += f"\n📊期待度スコア: {total_score}"
-        send_line(output)
+        title = f"👑【極・{direction}推奨】" if score_abs >= 4 else f"📢 CFD監視:{direction}"
+        msg_text = f"{title}\nスコア:{score_abs} {div_msg}\n\n"
+        msg_text += "\n".join([f"・{m}" for m in messages])
+        msg_text += f"\n\n現在: ${now_g:.2f}\n🛡️SL: ${sl:.2f}\n🎯TP: ${tp:.2f}\n📊ボラ(ATR): {atr:.2f}"
+        
+        send_line(msg_text)
 
 if __name__ == "__main__":
-    analyze_gold_cfd()
+    analyze_gold_ultimate_cfd()
