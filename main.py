@@ -27,7 +27,7 @@ def create_chart(df_1h, upper, lower, sma200_6h):
         mpf.make_addplot([lower]*50, color='cyan', linestyle='--', width=0.8),
     ]
     mpf.plot(df_1h.tail(50), type='candle', style='charles', savefig=file_path, 
-             addplot=ap, title="GOLD V5.5 (Relative ATR)", tight_layout=True)
+             addplot=ap, title="GOLD V5.6 (MAX-SIGNAL)", tight_layout=True)
     return file_path
 
 def upload_to_imgbb(file_path):
@@ -58,14 +58,12 @@ def main():
     current_sma200_6h = sma200_6h_series.iloc[-1].item()
     current_sma50_6h = sma50_6h_series.iloc[-1].item()
     
-    # --- ① 動的ATRフィルター（提案の反映） ---
+    # 動的ATRフィルター
     atr = (gold_1h['High'] - gold_1h['Low']).rolling(14).mean().iloc[-1].item()
     atr_mean = (gold_1h['High'] - gold_1h['Low']).rolling(50).mean().iloc[-1].item()
-    
-    # 過去平均の80%以下のボラティリティなら「死んだ相場」としてスルー
     if atr < atr_mean * 0.8: return 
 
-    # --- ② 6hトレンド同期フィルター ---
+    # 6hトレンド同期フィルター
     if now_p > current_sma200_6h and current_sma50_6h > current_sma200_6h:
         trend = "STRONG_UP"
     elif now_p < current_sma200_6h and current_sma50_6h < current_sma200_6h:
@@ -73,28 +71,36 @@ def main():
     else:
         return 
 
-    # タイミング用
+    # 1Hタイミング用
     ma20_1h = gold_1h['Close'].rolling(window=20).mean().iloc[-1].item()
     std_1h = gold_1h['Close'].rolling(window=20).std().iloc[-1].item()
     upper, lower = ma20_1h + (std_1h * 2), ma20_1h - (std_1h * 2)
     rsi_1h = calculate_rsi(gold_1h['Close']).iloc[-1].item()
 
-    # 3. 判定
+    # 3. 判定ロジック（④最強シグナル統合版）
     score = 0
     msgs = []
 
     if trend == "STRONG_UP":
-        if now_p > ma20_1h and rsi_1h > 50:
-            score += 3; msgs.append("🔥 【6hトレンド】上昇波に乗っています。")
-        if prev_p < lower and now_p > lower: 
-            score += 4; msgs.append("🎯 【押し目反発】理想的な再浮上を確認。")
+        # 基本トレンド加算
+        score += 3; msgs.append("🔥 【6hトレンド】上昇波に乗っています。")
+        
+        # 最強シグナル判定（反発＋勢い一致）
+        if prev_p < lower and now_p > lower and rsi_1h > 55:
+            score += 6; msgs.append("💎 【最強シグナル】押し目からの強い反発を確認。")
+        # 通常の反発
+        elif prev_p < lower and now_p > lower:
+            score += 4; msgs.append("🎯 【押し目反発】安値圏からの復帰を確認。")
     
     elif trend == "STRONG_DOWN":
-        if now_p < ma20_1h and rsi_1h < 50:
-            score -= 3; msgs.append("⚡ 【6hトレンド】下落波に乗っています。")
-        if prev_p > upper and now_p < upper: 
-            score -= 4; msgs.append("🎯 【戻り反落】理想的な下落再開を確認。")
+        score -= 3; msgs.append("⚡ 【6hトレンド】下落波に乗っています。")
+        
+        if prev_p > upper and now_p < upper and rsi_1h < 45:
+            score -= 6; msgs.append("💎 【最強シグナル】戻りからの強い急落を確認。")
+        elif prev_p > upper and now_p < upper:
+            score -= 4; msgs.append("🎯 【戻り反落】高値圏からの反転を確認。")
 
+    # トレンド逆行禁止
     if (trend == "STRONG_UP" and score < 0) or (trend == "STRONG_DOWN" and score > 0):
         return
 
@@ -102,6 +108,7 @@ def main():
     total_score = abs(score)
     if total_score >= 4:
         direction = "🚀 LONG (BUY)" if score > 0 else "📉 SHORT (SELL)"
+        # スコア7以上（最強シグナル等）なら爆益モード発動
         tp_mult = 4.5 if total_score >= 7 else 3.0
         sl = now_p - (atr * 2.0) if score > 0 else now_p + (atr * 2.0)
         tp = now_p + (atr * tp_mult) if score > 0 else now_p - (atr * tp_mult)
@@ -111,11 +118,11 @@ def main():
             url = upload_to_imgbb(create_chart(gold_1h, upper, lower, sma200_6h_for_chart))
         except: url = None
 
-        title = "👑 【究極・V5.5】" if total_score >= 7 else "🔥 【厳選・V5.5】"
-        text = f"{title}\n基準: 6hトレンド×相対ボラ\n\n方向: {direction}\n確信度: {'★' * total_score}\n\n"
+        title = "👑 【最強・鉄の掟】" if total_score >= 9 else ("🔥 【厳選・V5.6】" if total_score >= 7 else "⚡ 【注目・V5.6】")
+        text = f"{title}\n確信度: {'★' * (total_score // 2)} ({total_score})\n\n"
         text += "\n".join([f"{m}" for m in msgs])
-        text += f"\n\n📍 目標価格: ${now_p:.2f}\n🛡️ 損切: ${sl:.2f}\n🎯 利確: ${tp:.2f}\n\n"
-        text += f"📈 モード: {'爆益' if tp_mult > 3 else '堅実'}\n⏱ ボラ活性度: { (atr/atr_mean)*100:.1f}%"
+        text += f"\n\n📍 価格: ${now_p:.2f}\n🛡️ 損切: ${sl:.2f}\n🎯 利確: ${tp:.2f}\n\n"
+        text += f"📈 モード: {'💎爆益狙い' if tp_mult > 3 else '⚖️堅実トレード'}\n⏱ ボラ活性度: { (atr/atr_mean)*100:.1f}%"
         
         send_line_with_chart(text, url)
 
