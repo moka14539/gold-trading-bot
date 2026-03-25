@@ -3,6 +3,7 @@ import mplfinance as mpf
 import requests
 import json
 import os
+import pandas as pd
 
 # --- 設定 ---
 ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -10,11 +11,22 @@ USER_ID = os.getenv('LINE_USER_ID')
 IMGBB_API_KEY = os.getenv('IMGBB_API_KEY')
 
 def main():
-    # 1. 適当なデータを取得
-    df = yf.download("GC=F", interval="60m", period="5d")
+    # 1. データを取得
+    df = yf.download("GC=F", interval="60m", period="5d", auto_adjust=True)
     
-    # 2. 強制的にチャート画像を作成
+    # --- 【重要】型エラー対策 ---
+    # 数値型に変換し、欠損値がある行を削除
+    df = df.apply(pd.to_numeric, errors='coerce').dropna()
+    
+    if df.empty:
+        print("データが空です")
+        return
+
+    # 2. チャート画像を作成
     file_path = "test_chart.png"
+    # 念のためインデックスをDateTime型に確定
+    df.index = pd.to_datetime(df.index)
+    
     mpf.plot(df.tail(50), type='candle', style='charles', savefig=file_path)
     
     # 3. ImgBBにアップロード
@@ -38,8 +50,8 @@ def main():
     if image_url:
         messages.append({"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url})
     
-    requests.post(url, headers=headers, data=json.dumps({"to": USER_ID, "messages": messages}))
-    print(f"Status: {res.status_code}, Msg: {msg}")
+    line_res = requests.post(url, headers=headers, data=json.dumps({"to": USER_ID, "messages": messages}))
+    print(f"Status: {res.status_code}, LINE Status: {line_res.status_code}")
 
 if __name__ == "__main__":
     main()
