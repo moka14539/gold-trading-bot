@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime
 
-# --- 設定（GitHub Secretsから取得） ---
+# --- 設定（GitHub Secrets） ---
 ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 USER_ID = os.getenv('LINE_USER_ID')
 IMGBB_API_KEY = os.getenv('IMGBB_API_KEY')
@@ -29,7 +29,7 @@ def create_chart(df_1h, upper, lower):
         mpf.make_addplot([lower]*50, color='cyan', linestyle='--', width=0.8),
     ]
     mpf.plot(df_1h.tail(50), type='candle', style='charles', savefig=file_path, 
-             addplot=ap, title="GOLD V5.2-FINAL", tight_layout=True)
+             addplot=ap, title="GOLD V5.3 (ATR 3.5)", tight_layout=True)
     return file_path
 
 def upload_to_imgbb(file_path):
@@ -58,18 +58,18 @@ def main():
     sma50_d = gold_d['Close'].rolling(window=50).mean().iloc[-1].item()
     atr = (gold_1h['High'] - gold_1h['Low']).rolling(14).mean().iloc[-1].item()
 
-    # --- ③ ATRフィルター（ボラがない時はスルー） ---
-    if atr < 5: return 
+    # --- ③ ATRフィルター（3.5：絶妙なバランス型） ---
+    if atr < 3.5: return 
 
-    # --- ① トレンド同期フィルター（最強の地合い確認） ---
+    # --- ① トレンド同期フィルター ---
     if now_p > sma200_d and sma50_d > sma200_d:
         trend = "STRONG_UP"
     elif now_p < sma200_d and sma50_d < sma200_d:
         trend = "STRONG_DOWN"
     else:
-        return # 迷いがある相場（レンジ）は完全スルー
+        return 
 
-    # 1H指標
+    # 指標
     ma20_series = gold_1h['Close'].rolling(window=20).mean()
     ma20_1h = ma20_series.iloc[-1].item()
     std_1h = gold_1h['Close'].rolling(window=20).std().iloc[-1].item()
@@ -80,14 +80,13 @@ def main():
     score = 0
     msgs = []
 
-    # --- ② 押し目・戻り売り継続判定 ---
     if trend == "STRONG_UP":
         if now_p > ma20_1h and rsi_1h > 50:
             score += 3
             msgs.append("🔥 【トレンド追随】上昇の勢いが継続中。押し目買いの好機。")
         if prev_p < lower and now_p > lower: 
             score += 4
-            msgs.append("🎯 【反発確定】ボリンジャー下限で反転を確認。期待値上昇。")
+            msgs.append("🎯 【反発確定】安値圏での反転を確認。期待値上昇。")
     
     elif trend == "STRONG_DOWN":
         if now_p < ma20_1h and rsi_1h < 50:
@@ -95,7 +94,7 @@ def main():
             msgs.append("⚡ 【トレンド追随】下落の勢いが継続中。戻り売りの好機。")
         if prev_p > upper and now_p < upper: 
             score -= 4
-            msgs.append("🎯 【反落確定】ボリンジャー上限で反転を確認。期待値上昇。")
+            msgs.append("🎯 【反落確定】高値圏での反転を確認。期待値上昇。")
 
     # --- ④ トレンド逆行禁止フィルター ---
     if (trend == "STRONG_UP" and score < 0) or (trend == "STRONG_DOWN" and score > 0):
@@ -105,33 +104,19 @@ def main():
     total_score = abs(score)
     if total_score >= 4:
         direction = "🚀 LONG (BUY)" if score > 0 else "📉 SHORT (SELL)"
-        
-        # --- ③ 利確倍率の可変設定 ---
         tp_mult = 4.5 if total_score >= 7 else 3.0
-        sl = now_p - (atr * 2.0) if direction.startswith("🚀") else now_p + (atr * 2.0)
-        tp = now_p + (atr * tp_mult) if direction.startswith("🚀") else now_p - (atr * tp_mult)
+        sl = now_p - (atr * 2.0) if score > 0 else now_p + (atr * 2.0)
+        tp = now_p + (atr * tp_mult) if score > 0 else now_p - (atr * tp_mult)
 
         try:
             url = upload_to_imgbb(create_chart(gold_1h, upper, lower))
         except: url = None
 
-        # メッセージの組み立て
-        if total_score >= 7:
-            title = "👑 【究極・鉄の掟】 期待値MAXシグナル"
-            mode_text = "💎 爆益狙い（利確伸ばし）"
-        else:
-            title = "🔥 【厳選・鉄の掟】 高確率エントリー"
-            mode_text = "⚖️ 堅実トレード（通常利確）"
-
-        text = f"{title}\n\n"
-        text += f"方向: {direction}\n"
-        text += f"確信度: {'★' * total_score} ({total_score})\n\n"
+        title = "👑 【究極・鉄の掟】" if total_score >= 7 else "🔥 【厳選・鉄の掟】"
+        text = f"{title}\n\n方向: {direction}\n確信度: {'★' * total_score} ({total_score})\n\n"
         text += "\n".join([f"{m}" for m in msgs])
-        text += f"\n\n📍 エントリー目標: ${now_p:.2f}\n"
-        text += f"🛡️ 損切ライン: ${sl:.2f}\n"
-        text += f"🎯 利確ライン: ${tp:.2f}\n\n"
-        text += f"📈 運用モード: {mode_text}\n"
-        text += f"⏱ ATRボラティリティ: {atr:.1f}"
+        text += f"\n\n📍 エントリー目標: ${now_p:.2f}\n🛡️ 損切ライン: ${sl:.2f}\n🎯 利確ライン: ${tp:.2f}\n\n"
+        text += f"📈 モード: {'爆益' if tp_mult > 3 else '堅実'}\n⏱ ATR(ボラ): {atr:.2f}"
         
         send_line_with_chart(text, url)
 
