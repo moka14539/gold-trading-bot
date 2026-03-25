@@ -11,21 +11,33 @@ USER_ID = os.getenv('LINE_USER_ID')
 IMGBB_API_KEY = os.getenv('IMGBB_API_KEY')
 
 def main():
-    # 1. データを取得
+    # 1. データを取得（auto_adjust=Trueで古い形式に合わせる）
     df = yf.download("GC=F", interval="60m", period="5d", auto_adjust=True)
     
-    # --- 【重要】型エラー対策 ---
-    # 数値型に変換し、欠損値がある行を削除
-    df = df.apply(pd.to_numeric, errors='coerce').dropna()
+    # --- 【最強の型対策】 ---
+    # ① 多重階層インデックス（MultiIndex）を解除
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    # ② 必要な列だけを抽出してコピー（余計なメタデータを排除）
+    df = df[['Open', 'High', 'Low', 'Close']].copy()
+    
+    # ③ 強制的にfloat型に変換し、欠損値を削除
+    df = df.astype(float).dropna()
     
     if df.empty:
-        print("データが空です")
+        print("データが空または数値変換に失敗しました")
         return
 
     # 2. チャート画像を作成
     file_path = "test_chart.png"
-    # 念のためインデックスをDateTime型に確定
+    # DateTime型を確定させ、インデックス名を消す（mplfinanceの仕様対策）
     df.index = pd.to_datetime(df.index)
+    df.index.name = 'Date'
+    
+    # ここでエラーが出る場合はデータの中身に問題があるためprintで確認
+    print(df.head())
+    print(df.dtypes)
     
     mpf.plot(df.tail(50), type='candle', style='charles', savefig=file_path)
     
@@ -34,14 +46,14 @@ def main():
         res = requests.post("https://api.imgbb.com/1/upload", 
                             data={"key": IMGBB_API_KEY, "image": f.read()})
     
-    # 4. 結果を判定
+    # 4. 結果判定
     res_json = res.json()
     if res.status_code == 200:
         image_url = res_json['data']['url']
-        msg = "✅ 画像テスト成功！このURLが届いていれば設定は完璧です。"
+        msg = "✅ 三度目の正直！画像テスト成功。設定は完璧です。"
     else:
         image_url = None
-        msg = f"❌ 画像アップロード失敗: {res_json.get('error', {}).get('message', '不明なエラー')}"
+        msg = f"❌ アップロード失敗: {res_json.get('error', {}).get('message', '不明なエラー')}"
 
     # 5. LINEに送信
     url = "https://api.line.me/v2/bot/message/push"
