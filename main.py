@@ -1,6 +1,5 @@
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import requests
 import json
 import os
@@ -11,7 +10,21 @@ import pytz
 ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 USER_ID = os.getenv('LINE_USER_ID')
 
-# --- 共通機能 ---
+# --- 共通機能（自作インジケーター） ---
+def get_atr(df, length=14):
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    return tr.rolling(window=length).mean()
+
+def get_rsi(series, length=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
+    rs = gain / loss.replace(0, 0.00001)
+    return 100 - (100 / (1 + rs))
+
 def send_line(text):
     if not text: return
     url = "https://api.line.me/v2/bot/message/push"
@@ -37,91 +50,73 @@ def analyze_gold():
 
     if gold_1h.empty or dxy.empty: return None
 
-    score = 0
-    messages = []
-    now_p = float(gold_1h['Close'].iloc[-1])
+    score, messages = 0, []
+    now_p = float(gold_1h['Close'].iloc[-1].item())
     sma200 = gold_d['Close'].rolling(window=200).mean().iloc[-1].item()
     
-    # 指標計算 (1h MACD / ATR / RSI)
+    # MACD 
     exp1 = gold_1h['Close'].ewm(span=12, adjust=False).mean()
     exp2 = gold_1h['Close'].ewm(span=26, adjust=False).mean()
-    macd_1h, sig_1h = (exp1 - exp2), (exp1 - exp2).ewm(span=9, adjust=False).mean()
-    atr = ta.atr(gold_1h['High'], gold_1h['Low'], gold_1h['Close'], length=14).iloc[-1]
-    rsi_15 = ta.rsi(gold_15m['Close'], length=14).iloc[-1]
+    macd, signal = (exp1 - exp2), (exp1 - exp2).ewm(span=9, adjust=False).mean()
+    
+    atr_val = get_atr(gold_1h).iloc[-1]
+    rsi_15 = get_rsi(gold_15m['Close']).iloc[-1]
 
-    # 判定
     t_diff = tnx['Close'].iloc[-1].item() - tnx['Close'].iloc[-2].item()
     dxy_diff = dxy['Close'].iloc[-1].item() - dxy['Close'].iloc[-2].item()
 
     if now_p > sma200: score += 2; messages.append("🟢長期上昇トレンド")
-    if macd_1h.iloc[-1] > sig_1h.iloc[-1]: score += 1
+    if macd.iloc[-1] > signal.iloc[-1]: score += 1
     if t_diff < 0 and dxy_diff < 0: score += 2; messages.append("🌍マクロ追い風")
-
     if now_p < sma200: score -= 2; messages.append("🔴長期下落トレンド")
-    if macd_1h.iloc[-1] < sig_1h.iloc[-1]: score -= 1
+    if macd.iloc[-1] < signal.iloc[-1]: score -= 1
     if t_diff > 0 and dxy_diff > 0: score -= 2; messages.append("⛔マクロ逆風")
 
     total_score = abs(score)
     if total_score >= 3:
         direction = "BUY" if score > 0 else "SELL"
-        sl, tp = (now_p - atr*2.5, now_p + atr*4.0) if direction == "BUY" else (now_p + atr*2.5, now_p - atr*4.0)
-        title = f"👑【ゴールド・極{direction}】" if total_score >= 5 else f"📢【ゴールド・{direction}】"
-        return f"{title}\nスコア:{total_score}\n" + "\n".join([f"・{m}" for m in messages]) + \
-               f"\n\n💰価格: ${now_p:.2f}\n🛡️損切: ${sl:.2f}\n🎯利確: ${tp:.2f}\n⏱️RSI: {rsi_15:.1f}"
+        sl, tp = (now_p - atr_val*2.5, now_p + atr_val*4.0) if direction == "BUY" else (now_p + atr_val*2.5, now_p - atr_val*4.0)
+        return f"👑【ゴールド・{direction}】\nスコア:{total_score}\n" + "\n".join([f"・{m}" for m in messages]) + \
+               f"\n💰価格: ${now_p:.2f}\n🛡️損切: ${sl:.2f}\n🎯利確: ${tp:.2f}\n⏱️RSI: {rsi_15:.1f}"
     return None
 
 # --- 2. 日経225監視ロジック ---
 def analyze_nikkei():
-    # SQ判定
     def get_sq_alert():
         today = datetime.now()
-        first_day = today.replace(day=1)
-        first_friday = first_day + timedelta(days=(4 - first_day.weekday() + 7) % 7)
-        second_friday = first_friday + timedelta(days=7)
-        magic_wed = second_friday - timedelta(days=2)
-        if today.date() == second_friday.date(): return "⚠️【SQ本日】乱高下警戒！"
-        if today.date() == magic_wed.date(): return "⚠️【魔の水曜日】仕掛け警戒！"
+        f_friday = (today.replace(day=1) + timedelta(days=(4 - today.replace(day=1).weekday() + 7) % 7))
+        s_friday = f_friday + timedelta(days=7)
+        if today.date() == s_friday.date(): return "⚠️【SQ本日】警戒！"
+        if today.date() == (s_friday - timedelta(days=2)).date(): return "⚠️【魔の水曜日】警戒！"
         return ""
 
-    # データ取得
-    ext_data = yf.download(["^DJI", "^NDX", "JPY=X"], period="2d", interval="1d", progress=False)
+    ext_data = yf.download(["^DJI", "^NDX"], period="2d", interval="1d", progress=False)
     df = yf.download("^N225", interval="5m", period="2d", progress=False)
     if df.empty: return None
 
     dow_chg = ((ext_data['Close']['^DJI'].iloc[-1] - ext_data['Close']['^DJI'].iloc[-2]) / ext_data['Close']['^DJI'].iloc[-2]) * 100
     ndx_chg = ((ext_data['Close']['^NDX'].iloc[-1] - ext_data['Close']['^NDX'].iloc[-2]) / ext_data['Close']['^NDX'].iloc[-2]) * 100
     
-    # テクニカル
-    df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
-    bb = ta.bbands(df['Close'], length=20, std=2)
-    latest = df.iloc[-1]
+    # ボリンジャーバンド自作
+    ma = df['Close'].rolling(window=20).mean()
+    std = df['Close'].rolling(window=20).std()
+    u_band, l_band = ma + (std * 2), ma - (std * 2)
     
+    latest_c = df['Close'].iloc[-1].item()
     strategy = None
-    if latest['Close'] > bb['BBU_20_2.0'].iloc[-1] and (dow_chg > 0.1 or ndx_chg > 0.1):
-        strategy = "🚀【日経・強気買い】"
-    elif latest['Close'] < bb['BBL_20_2.0'].iloc[-1] and (dow_chg < -0.1 or ndx_chg < -0.1):
-        strategy = "📉【日経・強気売り】"
+    if latest_c > u_band.iloc[-1] and (dow_chg > 0.1 or ndx_chg > 0.1): strategy = "🚀【日経・強気買い】"
+    elif latest_c < l_band.iloc[-1] and (dow_chg < -0.1 or ndx_chg < -0.1): strategy = "📉【日経・強気売り】"
 
     if strategy:
-        tp, sl = round(latest['ATR'] * 1.5, 0), round(latest['ATR'] * 0.8, 0)
-        sq = get_sq_alert()
-        return f"{strategy}\n{sq}\n🇺🇸NYダウ: {dow_chg:+.2f}%\n🇯🇵価格: {latest['Close']:.0f}円\n🎯利確幅: +{tp}円 / 🛡️損切幅: -{sl}円"
+        atr_n = get_atr(df).iloc[-1]
+        return f"{strategy}\n{get_sq_alert()}\n🇺🇸NYダウ: {dow_chg:+.2f}%\n🇯🇵価格: {latest_c:.0f}円\n🎯利確幅: +{round(atr_n*1.5)}円"
     return None
 
-# --- メイン実行 ---
 def main():
-    is_safe, reason = is_market_safe()
-    if not is_safe:
-        print(f"市場休止中: {reason}")
-        return
-
-    # それぞれ個別に解析
-    gold_msg = analyze_gold()
-    nikkei_msg = analyze_nikkei()
-
-    # 通知がある場合のみ送信（別々に送ることで通知を分ける）
-    if gold_msg: send_line(gold_msg)
-    if nikkei_msg: send_line(nikkei_msg)
+    safe, reason = is_market_safe()
+    if not safe: return
+    send_line(analyze_gold())
+    send_line(analyze_nikkei())
 
 if __name__ == "__main__":
     main()
