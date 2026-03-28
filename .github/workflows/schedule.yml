@@ -4,10 +4,8 @@ on:
   push:
     branches: [ main ]
   schedule:
-    # 1時間おきに実行する設定（JST 9:00 - 24:00の間など調整可能）
-    # 分 時 日 月 曜日 (UTC基準なので注意)
     - cron: '0 * * * *'
-  workflow_dispatch: # 手動実行ボタンを有効化
+  workflow_dispatch:
 
 jobs:
   build:
