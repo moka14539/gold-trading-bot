@@ -6,11 +6,13 @@ import os
 from datetime import datetime, timedelta
 import pytz
 
-# --- 設定（環境変数） ---
+# --- 設定（環境変数・定数） ---
 ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 USER_ID = os.getenv('LINE_USER_ID')
+PRICE_FILE = "last_nikkei_price.txt"  # 前回通知時の価格保存用
+PRICE_DIFF_THRES = 50                 # 追撃通知のしきい値（50円）
 
-# --- 共通機能（自作インジケーター） ---
+# --- 共通計算関数 ---
 def get_atr(df, length=14):
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift()).abs()
@@ -25,22 +27,47 @@ def get_rsi(series, length=14):
     rs = gain / loss.replace(0, 0.00001)
     return 100 - (100 / (1 + rs))
 
+# --- 通知・フィルター機能 ---
 def send_line(text):
     if not text: return
     url = "https://api.line.me/v2/bot/message/push"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {ACCESS_TOKEN}"}
     data = {"to": USER_ID, "messages": [{"type": "text", "text": text}]}
-    requests.post(url, headers=headers, data=json.dumps(data))
+    try:
+        requests.post(url, headers=headers, data=json.dumps(data), timeout=10)
+    except Exception as e:
+        print(f"LINE送信エラー: {e}")
+
+def should_notify_nikkei(current_price):
+    """
+    価格フィルター：初動（ファイルなし）ならTrue、追撃なら価格差をチェック
+    """
+    if not os.path.exists(PRICE_FILE):
+        return True # 初動：即通知
+    
+    try:
+        with open(PRICE_FILE, "r") as f:
+            last_price = float(f.read().strip())
+        # 50円以上の変化があれば通知
+        return abs(current_price - last_price) >= PRICE_DIFF_THRES
+    except:
+        return True
+
+def save_last_price(current_price):
+    with open(PRICE_FILE, "w") as f:
+        f.write(str(current_price))
+
+def clear_last_price():
+    if os.path.exists(PRICE_FILE):
+        os.remove(PRICE_FILE)
 
 def is_market_safe():
     jst = datetime.now(pytz.timezone('Asia/Tokyo'))
     if jst.weekday() >= 5: return False, "土日休止"
-    if jst.weekday() == 0 and 6 <= jst.hour < 9: return False, "月曜早朝リスク"
-    if 6 <= jst.hour <= 7:
-        if jst.hour == 6 or (jst.hour == 7 and jst.minute < 30): return False, "早朝メンテ"
+    # 月曜早朝やメンテ時間は必要に応じて追加
     return True, "取引可能"
 
-# --- 1. ゴールド監視ロジック ---
+# --- 1. ゴールド監視ロジック (15分に1回想定) ---
 def analyze_gold():
     gold_1h = yf.download("GC=F", interval="60m", period="7d", progress=False)
     gold_15m = yf.download("GC=F", interval="15m", period="2d", progress=False)
@@ -80,43 +107,54 @@ def analyze_gold():
                f"\n💰価格: ${now_p:.2f}\n🛡️損切: ${sl:.2f}\n🎯利確: ${tp:.2f}\n⏱️RSI: {rsi_15:.1f}"
     return None
 
-# --- 2. 日経225監視ロジック ---
+# --- 2. 日経225監視ロジック (5分に1回想定) ---
 def analyze_nikkei():
-    def get_sq_alert():
-        today = datetime.now()
-        f_friday = (today.replace(day=1) + timedelta(days=(4 - today.replace(day=1).weekday() + 7) % 7))
-        s_friday = f_friday + timedelta(days=7)
-        if today.date() == s_friday.date(): return "⚠️【SQ本日】警戒！"
-        if today.date() == (s_friday - timedelta(days=2)).date(): return "⚠️【魔の水曜日】警戒！"
-        return ""
-
-    ext_data = yf.download(["^DJI", "^NDX"], period="2d", interval="1d", progress=False)
     df = yf.download("^N225", interval="5m", period="2d", progress=False)
+    ext_data = yf.download(["^DJI", "^NDX"], period="2d", interval="1d", progress=False)
     if df.empty: return None
 
     dow_chg = ((ext_data['Close']['^DJI'].iloc[-1] - ext_data['Close']['^DJI'].iloc[-2]) / ext_data['Close']['^DJI'].iloc[-2]) * 100
     ndx_chg = ((ext_data['Close']['^NDX'].iloc[-1] - ext_data['Close']['^NDX'].iloc[-2]) / ext_data['Close']['^NDX'].iloc[-2]) * 100
     
-    # ボリンジャーバンド自作
     ma = df['Close'].rolling(window=20).mean()
     std = df['Close'].rolling(window=20).std()
     u_band, l_band = ma + (std * 2), ma - (std * 2)
+    latest_c = float(df['Close'].iloc[-1].item())
     
-    latest_c = df['Close'].iloc[-1].item()
+    # 判定
     strategy = None
-    if latest_c > u_band.iloc[-1] and (dow_chg > 0.1 or ndx_chg > 0.1): strategy = "🚀【日経・強気買い】"
-    elif latest_c < l_band.iloc[-1] and (dow_chg < -0.1 or ndx_chg < -0.1): strategy = "📉【日経・強気売り】"
+    if latest_c > u_band.iloc[-1] and (dow_chg > 0.1 or ndx_chg > 0.1):
+        strategy = "🚀【日経・強気買い】"
+    elif latest_c < l_band.iloc[-1] and (dow_chg < -0.1 or ndx_chg < -0.1):
+        strategy = "📉【日経・強気売り】"
 
     if strategy:
-        atr_n = get_atr(df).iloc[-1]
-        return f"{strategy}\n{get_sq_alert()}\n🇺🇸NYダウ: {dow_chg:+.2f}%\n🇯🇵価格: {latest_c:.0f}円\n🎯利確幅: +{round(atr_n*1.5)}円"
+        # 価格フィルター（初動は通し、追撃は50円差チェック）
+        if should_notify_nikkei(latest_c):
+            save_last_price(latest_c)
+            atr_n = get_atr(df).iloc[-1]
+            return f"{strategy}\n🇺🇸NYダウ: {dow_chg:+.2f}%\n🇯🇵価格: {latest_c:.0f}円\n🎯利確幅: +{round(atr_n*1.5)}円"
+    else:
+        # チャンス外ならリセット（次回の突破を「初動」にするため）
+        clear_last_price()
+    
     return None
 
+# --- メイン実行部 ---
 def main():
     safe, reason = is_market_safe()
     if not safe: return
-    send_line(analyze_gold())
-    send_line(analyze_nikkei())
+
+    jst = datetime.now(pytz.timezone('Asia/Tokyo'))
+
+    # ゴールド：15分おき
+    if jst.minute % 15 == 0:
+        gold_msg = analyze_gold()
+        if gold_msg: send_line(gold_msg)
+
+    # 日経225：毎回（5分おき）
+    nikkei_msg = analyze_nikkei()
+    if nikkei_msg: send_line(nikkei_msg)
 
 if __name__ == "__main__":
     main()
