@@ -4,16 +4,25 @@ on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    # 5分おきに実行
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # 手動実行ボタン
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    # 他のプロセスが同時に走ってコンフリクトするのを防ぐ設定
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          # ファイルの書き込み・プッシュを許可するために必要
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -30,3 +39,19 @@ jobs:
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: python main.py
+
+      # --- ここが重要：前回の価格データをリポジトリに保存して次回に引き継ぐ ---
+      - name: Commit and push last price
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          # ファイルが存在する場合のみ追加
+          if [ -f last_nikkei_price.txt ]; then
+            git add last_nikkei_price.txt
+            # 変更がある場合のみコミット（skip ciで無限ループ防止）
+            git diff --quiet && git diff --staged --quiet || (git commit -m "Update last price [skip ci]" && git push)
+          else
+            # チャンス終了でファイルが消された場合も同期
+            git rm last_nikkei_price.txt --ignore-unmatch
+            git diff --quiet && git diff --staged --quiet || (git commit -m "Clear last price [skip ci]" && git push)
+          fi
