@@ -3,8 +3,10 @@ name: Gold and Nikkei 225 Monitor
 on:
   push:
     branches: [ main ]
+  # 自動実行（1時間に1回）
   schedule:
     - cron: '0 * * * *'
+  # 手動実行ボタンを表示
   workflow_dispatch:
 
 jobs:
