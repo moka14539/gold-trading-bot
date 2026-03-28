@@ -16,16 +16,16 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v4
         with:
-          python-version: '3.10' # 3.9から3.10にアップグレード
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yfinance pandas requests pytz
-          # pandas_ta を直接GitHubリポジトリからインストール
-          pip install git+https://github.com/twopirllc/pandas-ta.git
+          # 先に主要ライブラリをインストール
+          pip install pandas==2.0.3 yfinance requests pytz
+          # pandas_ta を依存関係を無視せずにインストール（バージョン指定なしで安定版を狙う）
+          pip install pandas-ta
 
       - name: Run analysis
         env:
