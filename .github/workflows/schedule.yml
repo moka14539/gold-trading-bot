@@ -1,11 +1,13 @@
-name: Gold Trading Bot
+name: Gold and Nikkei 225 Monitor
 
 on:
+  push:
+    branches: [ main ]
   schedule:
-    # 月曜から金曜まで、日本時間の9:00〜24:00の間、15分おきに実行
-    # (UTC 0:00 - 15:00 が日本時間 9:00 - 24:00)
-    - cron: '*/15 0-15 * * 1-5'
-  workflow_dispatch: # 手動実行ボタンを出すための設定
+    # 1時間おきに実行する設定（JST 9:00 - 24:00の間など調整可能）
+    # 分 時 日 月 曜日 (UTC基準なので注意)
+    - cron: '0 * * * *'
+  workflow_dispatch: # 手動実行ボタンを有効化
 
 jobs:
   build:
@@ -23,14 +25,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # サーバーでチャートを描画するためのライブラリ不足を防ぐ
-          sudo apt-get update
-          sudo apt-get install -y libpango-1.0-0 libpangoft2-1.0-0
+          pip install yfinance pandas requests pytz pandas_ta
 
-      - name: Run trading bot
+      - name: Run analysis
         env:
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
         run: python main.py
