@@ -16,16 +16,16 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Python
+        uses: actions/setup-python@v4  # ← ここが抜けていました
         with:
           python-version: '3.10'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # 先に主要ライブラリをインストール
-          pip install pandas==2.0.3 yfinance requests pytz
-          # pandas_ta を依存関係を無視せずにインストール（バージョン指定なしで安定版を狙う）
-          pip install pandas-ta
+          pip install pandas yfinance requests pytz
+          # 認証不要のzip形式でpandas-taを直接インストール
+          pip install https://github.com/twopirllc/pandas-ta/archive/refs/heads/master.zip
 
       - name: Run analysis
         env:
