@@ -1,4 +1,4 @@
-0327 BT勝率56%.資産3000万.XY換装.RSI通知追加.画像送信なし  import yfinance as yf
+  import yfinance as yf
 import pandas as pd
 import requests
 import json
