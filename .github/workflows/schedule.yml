@@ -2,14 +2,15 @@ name: Gold 15min Monitor
 
 on:
   schedule:
+    # 15分おきに実行
     - cron: '*/15 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # 手動実行ボタン
 
 jobs:
   gold_analysis:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -26,5 +27,5 @@ jobs:
         env:
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-        # ファイル名が main.py ならここを main.py に合わせる
+        # ファイル名が main.py なのでこれでOK
         run: python main.py
