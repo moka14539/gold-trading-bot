@@ -1,57 +1,57 @@
-name: Gold and Nikkei 225 Monitor
+name: Gold and Nikkei Independent Monitor
 
 on:
-  push:
-    branches: [ main ]
   schedule:
-    # 5分おきに実行
     - cron: '*/5 * * * *'
-  workflow_dispatch: # 手動実行ボタン
+  workflow_dispatch:
 
 jobs:
-  build:
+  # --- 日経225：5分おき ---
+  nikkei_job:
     runs-on: ubuntu-latest
-
-    # 他のプロセスが同時に走ってコンフリクトするのを防ぐ設定
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
-          # ファイルの書き込み・プッシュを許可するために必要
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas yfinance requests pytz
-
-      - name: Run analysis
+      - name: Run
         env:
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-        run: python main.py
-
-      # --- ここが重要：前回の価格データをリポジトリに保存して次回に引き継ぐ ---
-      - name: Commit and push last price
+        run: |
+          pip install pandas yfinance requests pytz
+          python nikkei_bot.py
+      - name: Sync Price
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # ファイルが存在する場合のみ追加
           if [ -f last_nikkei_price.txt ]; then
             git add last_nikkei_price.txt
-            # 変更がある場合のみコミット（skip ciで無限ループ防止）
-            git diff --quiet && git diff --staged --quiet || (git commit -m "Update last price [skip ci]" && git push)
+            git commit -m "Update Nikkei price [skip ci]" || echo "No changes"
+            git push
           else
-            # チャンス終了でファイルが消された場合も同期
             git rm last_nikkei_price.txt --ignore-unmatch
-            git diff --quiet && git diff --staged --quiet || (git commit -m "Clear last price [skip ci]" && git push)
+            git commit -m "Clear Nikkei price [skip ci]" || echo "No changes"
+            git push
+          fi
+
+  # --- ゴールド：15分おき ---
+  gold_job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Run if 15min
+        env:
+          LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: |
+          MIN=$(date +%M)
+          if [ $((10#$MIN % 15)) -eq 0 ]; then
+            pip install pandas yfinance requests pytz
+            python gold_bot.py
           fi
