@@ -1,57 +1,30 @@
-name: Gold and Nikkei Independent Monitor
+name: Gold 15min Monitor
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    # 15分、30分、45分、0分に実行
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
-  # --- 日経225：5分おき ---
-  nikkei_job:
+  gold_analysis:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - name: Run
-        env:
-          LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
-          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-        run: |
-          pip install pandas yfinance requests pytz
-          python nikkei_bot.py
-      - name: Sync Price
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          if [ -f last_nikkei_price.txt ]; then
-            git add last_nikkei_price.txt
-            git commit -m "Update Nikkei price [skip ci]" || echo "No changes"
-            git push
-          else
-            git rm last_nikkei_price.txt --ignore-unmatch
-            git commit -m "Clear Nikkei price [skip ci]" || echo "No changes"
-            git push
-          fi
+      - name: Checkout
+        uses: actions/checkout@v3
 
-  # --- ゴールド：15分おき ---
-  gold_job:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Run if 15min
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas yfinance requests pytz
+
+      - name: Run Gold Bot
         env:
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-        run: |
-          MIN=$(date +%M)
-          if [ $((10#$MIN % 15)) -eq 0 ]; then
-            pip install pandas yfinance requests pytz
-            python gold_bot.py
-          fi
+        run: python gold_bot.py
