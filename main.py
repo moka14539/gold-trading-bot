@@ -34,6 +34,7 @@ def analyze_and_send():
     if not is_safe: return
 
     # --- 1. データ取得 ---
+    # yfinanceのマルチインデックス対策として、取得直後に .stack(level=1) または .columnsを平坦化する
     gold_1h = yf.download("GC=F", interval="60m", period="7d", progress=False)
     gold_15m = yf.download("GC=F", interval="15m", period="5d", progress=False)
     gold_d = yf.download("GC=F", period="2y", progress=False)
@@ -42,11 +43,16 @@ def analyze_and_send():
 
     if gold_1h.empty or gold_15m.empty or dxy.empty: return
 
+    # 【重要】yfinanceのマルチインデックスを解除して単一列にする
+    for df in [gold_1h, gold_15m, gold_d, tnx, dxy]:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
     # スコア初期化
     trend_score, macro_score, logic_score = 0, 0, 0
     messages = []
     
-    # 数値の抽出（.item()を避け、マルチインデックス対策としてfloat型へ変換）
+    # 数値の抽出（平坦化したので .iloc[-1] で直接数値が取れる）
     now_p = float(gold_15m['Close'].iloc[-1])
     jst_now = datetime.now(pytz.timezone('Asia/Tokyo'))
     h = jst_now.hour
@@ -110,8 +116,7 @@ def analyze_and_send():
     today_data = today_data[today_data['Volume'] > 0]
     if not today_data.empty:
         vwap_now = (today_data['Close'] * today_data['Volume']).sum() / today_data['Volume'].sum()
-        # vwap_nowがSeriesで返る可能性を考慮
-        vwap_val = float(vwap_now.iloc[0]) if isinstance(vwap_now, pd.Series) else float(vwap_now)
+        vwap_val = float(vwap_now) # 階層解除済みなので直接float化可能
         if now_p < vwap_val * 0.998: logic_score += 1 
         elif now_p > vwap_val * 1.002: logic_score -= 1
 
