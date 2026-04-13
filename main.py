@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 import pytz
 
-# 環境変数（設定済みを想定）
+# 環境変数
 ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 USER_ID = os.getenv('LINE_USER_ID')
 
@@ -42,13 +42,12 @@ def analyze_and_send():
 
     if gold_1h.empty or gold_15m.empty or dxy.empty: return
 
-    # 各種スコア・メッセージ初期化
-    trend_score = 0
-    macro_score = 0
-    logic_score = 0
+    # スコア初期化
+    trend_score, macro_score, logic_score = 0, 0, 0
     messages = []
     
-    now_p = float(gold_15m['Close'].iloc[-1].item())
+    # 数値の抽出（.item()を避け、マルチインデックス対策としてfloat型へ変換）
+    now_p = float(gold_15m['Close'].iloc[-1])
     jst_now = datetime.now(pytz.timezone('Asia/Tokyo'))
     h = jst_now.hour
 
@@ -57,7 +56,7 @@ def analyze_and_send():
     high_low = gold_1h['High'] - gold_1h['Low']
     high_close = (gold_1h['High'] - gold_1h['Close'].shift()).abs()
     low_close = (gold_1h['Low'] - gold_1h['Close'].shift()).abs()
-    atr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean().iloc[-1].item()
+    atr = float(pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean().iloc[-1])
 
     # ADX (15m)
     plus_dm = (gold_15m['High'].diff()).where(lambda x: (x > 0) & (x > (gold_15m['Low'].diff() * -1)), 0)
@@ -69,18 +68,17 @@ def analyze_and_send():
     plus_di = 100 * (plus_dm.rolling(14).mean() / atr_adx)
     minus_di = 100 * (minus_dm.rolling(14).mean() / atr_adx)
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx_series = dx.rolling(14).mean()
-    adx_now = adx_series.iloc[-1].item()
+    adx_now = float(dx.rolling(14).mean().iloc[-1])
 
     # RSI (15m)
     delta_15 = gold_15m['Close'].diff()
     gain = (delta_15.where(delta_15 > 0, 0)).rolling(window=14).mean()
     loss = (-delta_15.where(delta_15 < 0, 0)).rolling(window=14).mean()
-    rsi_15 = (100 - (100 / (1 + (gain / loss.replace(0, 0.00001))))).iloc[-1].item()
+    rsi_15 = float((100 - (100 / (1 + (gain / loss.replace(0, 0.00001))))).iloc[-1])
 
     # --- 3. ロジック判定 ---
-    # A. トレンド (SMA200)
-    sma200 = gold_d['Close'].rolling(window=200).mean().iloc[-1].item()
+    # A. トレンド
+    sma200 = float(gold_d['Close'].rolling(window=200).mean().iloc[-1])
     if now_p > sma200:
         trend_score += 2
         messages.append("🟢長期上昇トレンド")
@@ -88,9 +86,9 @@ def analyze_and_send():
         trend_score -= 2
         messages.append("🔴長期下落トレンド")
 
-    # B. マクロ (金利・ドル)
-    t_diff = tnx['Close'].iloc[-1].item() - tnx['Close'].iloc[-2].item()
-    dxy_diff = dxy['Close'].iloc[-1].item() - dxy['Close'].iloc[-2].item()
+    # B. マクロ
+    t_diff = float(tnx['Close'].iloc[-1]) - float(tnx['Close'].iloc[-2])
+    dxy_diff = float(dxy['Close'].iloc[-1]) - float(dxy['Close'].iloc[-2])
     if t_diff < 0 and dxy_diff < 0:
         macro_score += 2
         messages.append("🌍マクロ追い風")
@@ -100,46 +98,48 @@ def analyze_and_send():
 
     # C. ADXトレンド強度
     if adx_now > 25:
-        if plus_di.iloc[-1] > minus_di.iloc[-1]:
+        if float(plus_di.iloc[-1]) > float(minus_di.iloc[-1]):
             logic_score += 1
-            messages.append(f"🔥上昇勢いあり(ADX:{adx_now:.1f})")
+            messages.append(f"🔥トレンド加速(ADX:{adx_now:.1f})")
         else:
             logic_score -= 1
-            messages.append(f"🧊下落勢いあり(ADX:{adx_now:.1f})")
+            messages.append(f"🧊下落加速(ADX:{adx_now:.1f})")
 
     # D. 当日VWAP
     today_data = gold_15m[gold_15m.index.date == gold_15m.index[-1].date()].copy()
     today_data = today_data[today_data['Volume'] > 0]
     if not today_data.empty:
         vwap_now = (today_data['Close'] * today_data['Volume']).sum() / today_data['Volume'].sum()
-        if now_p < vwap_now * 0.998: logic_score += 1 # 割安
-        elif now_p > vwap_now * 1.002: logic_score -= 1 # 割高
+        # vwap_nowがSeriesで返る可能性を考慮
+        vwap_val = float(vwap_now.iloc[0]) if isinstance(vwap_now, pd.Series) else float(vwap_now)
+        if now_p < vwap_val * 0.998: logic_score += 1 
+        elif now_p > vwap_val * 1.002: logic_score -= 1
 
-    # E. フェイク抜け・上ヒゲ
-    ph = gold_15m['High'].rolling(20).max().iloc[-2]
-    pl = gold_15m['Low'].rolling(20).min().iloc[-2]
+    # E. フェイク抜け
+    ph = float(gold_15m['High'].rolling(20).max().iloc[-2])
+    pl = float(gold_15m['Low'].rolling(20).min().iloc[-2])
     last_bar = gold_15m.iloc[-1]
-    body = abs(last_bar['Close'] - last_bar['Open'])
-    wick_up = last_bar['High'] - max(last_bar['Open'], last_bar['Close'])
+    body = abs(float(last_bar['Close']) - float(last_bar['Open']))
+    wick_up = float(last_bar['High']) - max(float(last_bar['Open']), float(last_bar['Close']))
 
-    if last_bar['High'] > ph and (last_bar['High'] - ph) < atr * 0.5:
+    if float(last_bar['High']) > ph and (float(last_bar['High']) - ph) < atr * 0.5:
         logic_score -= 1
         if wick_up > body * 1.5:
             logic_score -= 1
-            messages.append("⚠️フェイク上抜け(上ヒゲ)")
-    if last_bar['Low'] < pl and (pl - last_bar['Low']) < atr * 0.5:
+            messages.append("⚠️フェイク上抜け")
+
+    if float(last_bar['Low']) < pl and (pl - float(last_bar['Low'])) < atr * 0.5:
         logic_score += 1
         messages.append("⚠️フェイク下抜け")
 
-    # F. 時間帯加重
+    # F. 時間帯
     time_score = 1 if 16 <= h <= 23 else (-1 if 0 <= h <= 8 else 0)
 
-    # --- 4. 総合判定 ---
+    # --- 4. 判定 ---
     total_score = trend_score + macro_score + logic_score + time_score
     abs_score = abs(total_score)
 
-    # デバッグログ
-    print(f"[{jst_now}] Total:{total_score} (Trend:{trend_score} Macro:{macro_score} Logic:{logic_score} Time:{time_score})")
+    print(f"[{jst_now}] Score:{total_score} (T:{trend_score} M:{macro_score} L:{logic_score} H:{time_score})")
 
     if abs_score >= 3:
         direction = "BUY" if total_score > 0 else "SELL"
