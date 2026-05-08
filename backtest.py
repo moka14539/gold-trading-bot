@@ -437,12 +437,12 @@ def main():
 
     # CSV出力
     if not trades.empty:
-        csv_path = '/mnt/user-data/outputs/backtest_result.csv'
+        csv_path = 'backtest_result.csv'
         trades.to_csv(csv_path, index=False, encoding='utf-8-sig')
         print(f"\n💾 トレード履歴: {csv_path}")
 
         # グラフ出力
-        img_path = '/mnt/user-data/outputs/backtest_equity.png'
+        img_path = 'backtest_equity.png'
         plot_equity(trades, img_path)
 
     print("\n✅ 完了")

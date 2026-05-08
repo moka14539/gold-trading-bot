@@ -154,12 +154,12 @@ def main():
     print(f"\n   ⚠️  過去データへの最適化です。必ずリアルで検証してください。")
 
     # CSV出力
-    csv_path = '/mnt/user-data/outputs/optimize_result.csv'
+    csv_path = 'optimize_result.csv'
     results.to_csv(csv_path, index=False, encoding='utf-8-sig')
     print(f"\n💾 全結果: {csv_path}")
 
     # ヒートマップ
-    img_path = '/mnt/user-data/outputs/optimize_heatmap.png'
+    img_path = 'optimize_heatmap.png'
     plot_heatmap(results, img_path)
 
     print("\n✅ 完了")
